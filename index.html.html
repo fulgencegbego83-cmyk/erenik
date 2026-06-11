@@ -2877,6 +2877,7 @@ function renderAdminTbl() {
 // ═══ PHOTO UPLOAD ═══
 function loadPhoto(inp, slot) {
   if (!inp.files || !inp.files[0]) return;
+  var file = inp.files[0];
   var r = new FileReader();
   r.onload = function(e) {
     if (slot === 1) {
@@ -2884,14 +2885,48 @@ function loadPhoto(inp, slot) {
       var av = document.getElementById("dashAva"); if (av) av.src = e.target.result;
     } else {
       var s = document.getElementById("peSlot" + slot);
-      if (s) {
-        s.style.background = "transparent";
-        s.innerHTML = '<img src="' + e.target.result + '" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" alt="">';
-      }
+      if (s) s.src = e.target.result;
     }
   };
-  r.readAsDataURL(inp.files[0]);
+  r.readAsDataURL(file);
+  // Upload vers Supabase Storage
+  uploadPhotoToSupabase(file, slot);
 }
+
+async function uploadPhotoToSupabase(file, slot) {
+  if (!_supabase) { console.log("Supabase non connecté"); return; }
+  try {
+    var user = await _supabase.auth.getUser();
+    var userId = user.data && user.data.user ? user.data.user.id : "anonymous";
+    var ext = file.name.split(".").pop() || "jpg";
+    var fileName = userId + "_slot" + slot + "_" + Date.now() + "." + ext;
+    var result = await _supabase.storage
+      .from("photos")
+      .upload(fileName, file, { upsert: true, contentType: file.type });
+    if (result.error) {
+      console.error("Upload error:", result.error);
+      showToast("Erreur upload photo");
+      return;
+    }
+    // Get public URL
+    var urlResult = _supabase.storage.from("photos").getPublicUrl(fileName);
+    var publicUrl = urlResult.data && urlResult.data.publicUrl;
+    if (publicUrl) {
+      // Save URL in member profile
+      await _supabase.from("members").upsert({
+        user_id: userId,
+        photo_url: publicUrl,
+        updated_at: new Date().toISOString()
+      }, { onConflict: "user_id" });
+      showToast("✅ Photo sauvegardée !");
+      console.log("Photo URL:", publicUrl);
+    }
+  } catch(e) {
+    console.error("Upload failed:", e);
+  }
+}
+
+
 function saveProfil() {
   var p = document.getElementById("pfPrenom");
   if (p && p.value.trim()) {
